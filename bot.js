@@ -3,7 +3,9 @@ const { Client, InterfaceController, Location, List, Buttons } = require('./inde
 const buffer = require('buffer');
 const QRCode = require('qrcode');
 const XMLHttpRequest = require('xhr2');
+const woman=String.fromCodePoint(0x1F9B8);
 const smile=String.fromCodePoint(0x1F603);
+const robot=String.fromCodePoint(0x1F916);
 const spiral0=String.fromCodePoint(0x1F635);
 const spiral1=String.fromCodePoint(0x200D);
 const spiral2=String.fromCodePoint(0x1F4AB);
@@ -22,7 +24,26 @@ const linkRequestUrl = "https://api.easytaxassistant.it/wabot/getuploadurl?userI
 const linkPost = "https://api.easytaxassistant.it/wabot/addnewdocument";
 const username = "";
 const password = "";
+const myID = "393791605787@c.us";
 const base64Credentials = Buffer.from(username + ":" + password).toString('base64');
+const sql = require('mssql')
+const sqlConfig = {
+  user: "",
+  password: "",
+  database: "tax",
+  server: 'localhost',
+  pool: {
+    max: 10,
+    min: 0,
+    idleTimeoutMillis: 30000
+  },
+  options: {
+    encrypt: true, // for azure
+    trustServerCertificate: true // change to true for local dev / self-signed certs
+  }
+}
+
+
 
 function gestisciErrore(error) {
     console.log(error);
@@ -152,6 +173,69 @@ function saveFile(data, userID, mimetype) {
     });
 }
 
+var connectAndAnswer = function (){
+	this.answer = function (text,telefono){
+		return new Promise(function (resolve, reject) {
+			sql.connect(sqlConfig, function(err) {
+				if (err==null){
+					var request=new sql.Request();
+					request.input('telefono', telefono);
+					request.input('domanda',text);
+					request.execute('varificaFAQ',(error, result) => {
+						if (error==null){
+							if (result.recordsets[0] == "")
+								resolve("");
+							else
+								resolve(result.recordset[0]["risposta"]);
+						}
+						else reject(error);
+					});
+				}
+				else reject(err);
+			});
+		});
+	}
+	this.welcome = function(text,telefono,nome){
+		return new Promise(function (resolve, reject) {
+			sql.connect(sqlConfig, function(err) {
+				if (err==null){
+					var request=new sql.Request();
+					request.input('telefono', telefono);
+					request.input('nominativo', nome);
+					request.input('domanda', text);
+					request.execute('varificaFAQ_ACCESSO',(error, result) => {
+						if (error==null){
+							resolve(result);
+						}
+						else reject(error);
+					});
+				}
+				else reject(err);
+			});
+		});
+	}
+	this.score = function(domanda,risposta,punteggio,telefono){
+		return new Promise(function(resolve,reject){
+			sql.connect(sqlConfig, function(err) {
+				if(err==null){
+					var request=new sql.Request();
+					request.input('domanda', domanda);
+					request.input('risposta', risposta);
+					request.input('punteggio', punteggio);
+					request.input('telefono', telefono);
+					request.execute('scoreInsertFAQ',(error, result) => {
+						if(error==null){
+							resolve(result);
+						}
+						else reject(error);
+					});
+				}
+				else reject(err);
+			});
+		});
+	}
+}
+var connectAndanswer = new connectAndAnswer();
 client.on('qr', (qr) => {
     // NOTE: This event will not be fired if a session is specified.
     console.log('QR RECEIVED', qr);
@@ -183,13 +267,14 @@ client.on('auth_failure', msg => {
 client.on('ready', () => {
     console.log('READY');
 });
+var count=0;
+var flag = false;
 //message recieved management  
 client.on('message', async msg => {
     console.log('MESSAGE RECEIVED', msg);
-
+	
     client.interface.openChatWindow(msg.id.remote);
-    //client.pupPage.reload();
-
+    
     if (msg.type === "e2e_notification") {
         return;
     }
@@ -208,11 +293,12 @@ client.on('message', async msg => {
                         (response) => {
                             return response;
                         },
-                        (error) => { console.log("error download => ",error) });
+                        (error) => { console.log(error)}); 
                     //document upload
                     const printDocumentFilename = async () => {
                         const a = await document;
-                        const util = require("util")
+                        console.log(a.mimetype);
+						const util = require("util")
                         console.log(util.inspect(document).includes("pending"));
                         if (util.inspect(document).includes("pending")) {
                             msg.reply("Scusa ho un problema nel caricare questa immagina, riprova a inviare");
@@ -248,7 +334,97 @@ client.on('message', async msg => {
                     printDocumentFilename();
                 }
                 else if (msg.type === "call_log") msg.reply("Ho notato che hai provato a chiamarmi. Sfortunatamente il mio creatore non mi ha ancora insegnato a rispondere. " + call);
-                else msg.reply("Benvenuto nel bot ufficiale di EasyTax Assistant! " + smile + "\n" + response_http.Data.Name + " puoi inviare i documenti che intendi caricare sul tuo profilo!");
+				else if(msg.body.toLowerCase() == "si" || msg.body.toLowerCase() == "no"){
+					
+					var result=msg.getChat().then(
+						(response) => {
+							var punteggio = response.fetchMessages({limit:4}).then(
+							(response) => {
+								for(i=0;i<response.length;i++){
+									/*if(response[i].body.toLowerCase() == "si" || response[i].body.toLowerCase() == "no") {
+										count++;
+									}*/
+									if(response[i].body == "Ti è piaciuta la risposta? \nRispondi Si o No, grazie! "+smile) flag=true;
+								}
+								if(/*count==1 && */flag){
+									console.log("esatto");
+									response.pop();
+									for(i=0;i<response.length;i++){
+										if(response[i].from == msg.id.remote) {
+											var domanda=response[i].body;
+											domanda=domanda.replace(/[^a-zA-Z ]/g, "");
+										}
+										else if(response[i].from == myID) {
+											if(response[i].body != "Ti è piaciuta la risposta? \nRispondi Si o No, grazie! "+smile){
+												var risposta = response[i].body;
+											}
+										}
+									}
+									
+									var risultato = {"domanda":domanda,"risposta":risposta,"punteggio":msg.body.toLowerCase()};
+									return risultato;
+								}
+								else{
+									console.log("errato");
+									console.log(count);
+									msg.reply("Messaggio non valido!");
+									return "errato";
+								}
+								
+						});
+						return punteggio;
+					});
+					//count=0;
+					flag = false;
+					const stampaPunteggio = async()=>{
+						var punt=await result;
+						if (punt!="errato"){
+							connectAndanswer.score(punt["domanda"],punt["risposta"],punt["punteggio"],telefono).then(
+								(response) => {
+									msg.reply("Grazie mille per il tuo contributo! "+smile);
+								},
+								(_error)=>{
+									msg.reply("Non sono riuscito ad aggiornare il punteggio.");
+									console.log(_error);
+								});
+							console.log(punt);
+						}
+					}
+					stampaPunteggio();
+				}
+                else {
+					var text=msg.body.toLowerCase();
+					//text=text.replace("?", "");
+					text=text.replace(/[^a-zA-Z ]/g, "");
+					console.log(text);
+					connectAndanswer.welcome(text,telefono,response_http.Data.Name).then(
+						(response) => {
+							if(response.recordset[0]["risposta"]!="no"){
+								var ans = response.recordset[0]["RISPOSTA"].replace(/-/,robot);
+								ans = ans.replace("+",smile);
+								msg.reply(ans);
+							}
+							if(response.recordset[0]["risposta"]=="no" && (text!="ciao" && text!="buongiorno" && text!="salve")){
+								connectAndanswer.answer(text,telefono).then(
+								(response)=>{
+									if (response!="")
+										msg.reply(response);
+									else msg.reply("FAQ non trovata "+spiral+" Prova a riformulare la domanda con frasi semplice e brevi. Se non troverò presto una soluzione, verrai contattato da un nostro operatore umano. "+woman);
+									client.sendMessage(msg.id.remote,"Ti è piaciuta la risposta? \nRispondi Si o No, grazie! "+smile);
+								},
+								(_error) => {
+									console.log(_error);
+									msg.reply("Mi dispiace, ho riscontrato problemi con il server, riprovare più tardi");
+								});
+							}
+						},
+						(_error)=>{
+							console.log(_error);
+						});
+						
+					
+				}
+				//msg.reply("Benvenuto nel bot ufficiale di EasyTax Assistant! " + smile + "\n" + response_http.Data.Name + " puoi inviare i documenti che intendi caricare sul tuo profilo!");
             }
             else {
                 //send msg to different devices if not signed up
